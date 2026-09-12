@@ -1,5 +1,8 @@
 # newapi-checkin
 
+[![Release](https://img.shields.io/github/v/release/JINGTU0V0/newapi-checkin?label=release&color=blue)](https://github.com/JINGTU0V0/newapi-checkin/releases/latest)
+[![Download exe](https://img.shields.io/github/downloads/JINGTU0V0/newapi-checkin/v1.0.0/total?label=exe%20downloads&color=green)](https://github.com/JINGTU0V0/newapi-checkin/releases/latest)
+
 多站点 New API / One API 公益中转站每日自动签到。纯 HTTP，无浏览器依赖，配置驱动。
 
 从个人用了几个月、覆盖 9+ 站点的实战脚本泛化而来：每类反自动化对策收敛为一个配置字段，
@@ -16,6 +19,7 @@
   | `proof` | Altcha 式 PoW 验证，解出一次性 proof |
   | `ocr` | 图形验证码，ddddocr 识别重试（需 `pip install ddddocr pillow`） |
   | `mode: routerteam` | JWT 鉴权站（签到 + 每日抽奖报名） |
+  面板添加站点时点「🔍 自动检测模式」，用你的凭据实测自动选出正确模式并展示判定依据。
 - ✅ Telegram 通知：失败当天每站只报一次；当天全部完成后推日报（各站奖励 + 合计美元）
 - ✅ `.checkin_ledger.json` 按日记账奖励额度与余额，自动保留 90 天
 - ✅ 增量模式 `--today`：状态文件按日记进度，重跑只补失败站——定时一天两次即自动重试
@@ -23,6 +27,10 @@
 - ✅ 零依赖偏好：除 `requests` 外全是标准库；没装 PyYAML 时内置受限解析器兜底
 
 ## 快速开始
+
+**Windows 零门槛**：到 [Releases](https://github.com/JINGTU0V0/newapi-checkin/releases/latest) 下载
+`newapi-checkin.exe` 双击即用（交互菜单含签到 / Web 面板 / 编辑配置 / 日报）。首次运行若
+SmartScreen 拦截，点「仍要运行」（未签名二进制）。
 
 ```bash
 pip install requests
