@@ -1,0 +1,20 @@
+services:
+  checkin:
+    build: .
+    container_name: newapi-checkin
+    restart: unless-stopped
+    environment:
+      - TZ=Asia/Shanghai
+      # 通知与密码的 ${ENV} 占位在这里注入（或写到 .env 文件）
+      - TG_BOT_TOKEN=***
+      - TG_CHAT_ID=change-me
+      - PW_EXAMPLE=change-me
+      # 出境困难的站需要代理时：
+      # - HTTPS_PROXY=http://172.17.0.1:7890
+    volumes:
+      - ./sites.yaml:/app/sites.yaml:ro
+      - ./creds.json:/app/creds.json:ro
+      - checkin-data:/app/data
+
+volumes:
+  checkin-data:

@@ -1,0 +1,12 @@
+# 个人配置与运行产物，不要提交
+sites.yaml
+sites.mine.yaml
+creds.json
+.checkin_state.json
+.checkin_ledger.json
+run/
+build/
+dist/
+*.egg-info/
+__pycache__/
+*.pyc

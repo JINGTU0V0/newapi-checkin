@@ -1,0 +1,42 @@
+# ============================================================
+# newapi-checkin 站点配置模板
+# 复制为 sites.yaml 后按需修改。密码等敏感值用 ${ENV_VAR}
+# 占位从环境变量读取（也可以直接写死，但建议放进 creds.json）。
+# ============================================================
+
+settings:
+  # One API 额度换算美元的比率（500000 = $1），仅用于日报展示
+  quota_per_dollar: 500000
+  # 通知（三选一或都配，全部可留空）
+  notify:
+    telegram:
+      token: "${TG_BOT_TOKEN}"
+      chat_id: "${TG_CHAT_ID}"
+      proxy: ""            # 服务器出境需代理时填 http://127.0.0.1:7890
+    webhook: ""            # 通用 POST {"text": ...}，兼容钉钉/飞书/企微需自改字段
+    shell: ""              # 自定义命令，消息经 stdin 传入，如 notify-send
+
+defaults:
+  username: "your-username"   # 站点条目省略 username 时套用
+
+# ------------------------------------------------------------
+# 站点字段说明
+#   name       站名（与 credentials 键对应）
+#   base_url   站点地址
+#   mode       缺省 = 标准 New/One API；routerteam = JWT 鉴权站
+#   claim      公益额度领取端点（代替标准签到）
+#   sign       签到需 timestamp+HmacSHA256 签名（前端硬编码密钥）
+#     sign_key   签名密钥，省略用内置默认
+#   proof      签到需先解 Altcha PoW 换一次性 proof
+#   ocr        签到带图形验证码，需 pip install ddddocr pillow
+#   checkin_code  固定签到码（写在 creds.json 里更好）
+#   enabled    false 可临时停用
+# ------------------------------------------------------------
+sites:
+  # 暂无示例站，用面板「＋ 添加网站」表单添加，或按下面格式手写（去掉 # 即可）：
+  # - name: MyAPI
+  #   base_url: https://api.example.com
+  #   username: myname          # 省略则用 defaults.username / creds.json
+  # - name: QuotaSite
+  #   base_url: https://quota.example.net
+  #   claim: true

@@ -1,0 +1,381 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>newapi-checkin</title>
+<style>
+:root {
+  color-scheme: dark;
+  --bg: #0f1115; --card: #171a21; --border: #262b36;
+  --fg: #e6e9ef; --muted: #8b93a7;
+  --ok: #4ade80; --fail: #f87171; --run: #60a5fa; --warn: #fbbf24;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--fg);
+  font: 14px/1.6 system-ui, "Segoe UI", "Microsoft YaHei", sans-serif; }
+.wrap { max-width: 1060px; margin: 0 auto; padding: 20px 16px 60px; }
+header { display: flex; align-items: baseline; gap: 12px; margin-bottom: 6px; }
+h1 { font-size: 19px; margin: 0; }
+#today-usd { color: var(--warn); font-weight: 700; font-size: 17px; }
+#sub { color: var(--muted); font-size: 12px; }
+.tabs { display: flex; gap: 6px; margin: 16px 0; }
+.tabs button, .btn {
+  background: var(--card); color: var(--fg); border: 1px solid var(--border);
+  border-radius: 8px; padding: 7px 14px; cursor: pointer; font-size: 13px; }
+.tabs button.on { border-color: var(--run); color: var(--run); }
+.btn.primary { background: #1d4ed8; border-color: #1d4ed8; color: #fff; }
+.btn:disabled { opacity: .45; cursor: default; }
+.toolbar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 14px; }
+label.chk { color: var(--muted); font-size: 13px; user-select: none; }
+.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 10px; }
+.site { background: var(--card); border: 1px solid var(--border); border-radius: 10px;
+  padding: 12px 14px; position: relative; }
+.site .nm { font-weight: 600; }
+.site .url { color: var(--muted); font-size: 11px; word-break: break-all; }
+.site .qt { position: absolute; right: 12px; top: 10px; font-size: 13px; color: var(--warn); }
+.pill { display: inline-block; font-size: 11px; border-radius: 99px; padding: 1px 9px; margin-top: 6px; }
+.p-ok   { background: rgba(74,222,128,.15); color: var(--ok); }
+.p-done { background: rgba(96,165,250,.15); color: var(--run); }
+.p-fail { background: rgba(248,113,113,.15); color: var(--fail); }
+.p-wait { background: rgba(139,147,167,.15); color: var(--muted); }
+.p-run  { background: rgba(96,165,250,.15); color: var(--run); }
+.p-run::after { content: ""; animation: dots 1.2s steps(4) infinite; }
+@keyframes dots { 0%{content:""} 25%{content:"·"} 50%{content:"··"} 75%{content:"···"} }
+#logbox { margin-top: 14px; background: #0b0d11; border: 1px solid var(--border);
+  border-radius: 10px; padding: 12px; font: 12px/1.55 ui-monospace, Consolas, monospace;
+  max-height: 340px; overflow-y: auto; white-space: pre-wrap; display: none; }
+canvas { background: var(--card); border: 1px solid var(--border); border-radius: 10px; width: 100%; }
+.cfg-area { width: 100%; min-height: 420px; background: #0b0d11; color: var(--fg);
+  border: 1px solid var(--border); border-radius: 10px; padding: 12px;
+  font: 12px/1.5 ui-monospace, Consolas, monospace; resize: vertical; }
+#msg { font-size: 13px; min-height: 20px; }
+#msg.ok { color: var(--ok); } #msg.err { color: var(--fail); }
+.hidden { display: none !important; }
+section { margin-top: 8px; }
+a { color: var(--run); }
+.site .ops { margin-top: 8px; display: flex; gap: 10px; }
+.site .ops a { font-size: 12px; cursor: pointer; color: var(--muted); }
+.site .ops a:hover { color: var(--run); }
+#modal { position: fixed; inset: 0; background: rgba(0,0,0,.55); display: flex;
+  align-items: center; justify-content: center; z-index: 50; }
+#modal-card { background: var(--card); border: 1px solid var(--border); border-radius: 12px;
+  padding: 18px 20px; width: min(440px, 92vw); max-height: 90vh; overflow-y: auto; }
+#modal-card .mh { font-size: 16px; font-weight: 700; margin-bottom: 12px; }
+#modal-card label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 10px; }
+#modal-card input, #modal-card select {
+  display: block; width: 100%; margin-top: 4px; background: #0b0d11; color: var(--fg);
+  border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; font-size: 13px; }
+#modal-card label.chk { display: flex; align-items: center; gap: 6px; }
+#modal-card label.chk input { width: auto; margin: 0; }
+.mrow { display: flex; gap: 8px; margin-top: 14px; }
+#m-msg { font-size: 12px; min-height: 18px; margin-top: 6px; color: var(--fail); }
+#m-msg.ok { color: var(--ok); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>📅 newapi-checkin</h1>
+    <span id="today-usd"></span>
+  </header>
+  <div id="sub"></div>
+
+  <div class="tabs">
+    <button data-t="run" class="on">签到</button>
+    <button data-t="chart">收益曲线</button>
+    <button data-t="cfg">配置</button>
+  </div>
+
+  <!-- 签到 -->
+  <section id="s-run">
+    <div class="toolbar">
+      <button class="btn primary" id="b-full">立即签到（今日未完成）</button>
+      <button class="btn" id="b-retry">只重跑失败站</button>
+      <button class="btn" id="b-add">＋ 添加网站</button>
+      <label class="chk"><input type="checkbox" id="notify" checked> 完成后推送通知</label>
+      <span id="runstate"></span>
+    </div>
+    <div class="grid" id="sites"></div>
+    <div id="logbox"></div>
+  </section>
+
+  <!-- 添加/编辑站点弹窗 -->
+  <div id="modal" class="hidden">
+    <div id="modal-card">
+      <div class="mh" id="modal-title">添加网站</div>
+      <label>站点名称<input id="m-name" placeholder="如 MyAPI"></label>
+      <label>站点地址<input id="m-url" placeholder="https://api.example.com"></label>
+      <label>用户名 / 邮箱<input id="m-user" placeholder="登录用的用户名或邮箱"></label>
+      <label>密码<input id="m-pass" type="password" placeholder="明文或 ${ENV_VAR} 占位；编辑时留 *** 表示不修改"></label>
+      <label>签到模式
+        <select id="m-mode">
+          <option value="oneapi">标准 New/One API（账密登录+签到）</option>
+          <option value="claim">公益额度领取（claim 端点）</option>
+          <option value="sign">签名接口（timestamp+HMAC）</option>
+          <option value="proof">PoW 验证（Altcha 式）</option>
+          <option value="ocr">图形验证码（ddddocr）</option>
+          <option value="routerteam">JWT 站（签到+抽奖报名）</option>
+        </select>
+      </label>
+      <div style="margin:-4px 0 10px"><button class="btn" id="m-detect" style="font-size:12px;padding:4px 12px">🔍 自动检测模式</button>
+      <span id="m-detect-msg" style="font-size:12px;color:var(--muted)"></span></div>
+      <div id="m-detect-steps" style="font-size:11px;color:var(--muted);white-space:pre-wrap;margin:-4px 0 10px"></div>
+      <div id="m-adv" class="hidden"><label>credential 键名<input id="m-cred" placeholder="多站共用一份账号时指定"></label></div>
+      <label class="chk"><input type="checkbox" id="m-showadv"> 高级选项</label>
+      <div class="mrow">
+        <button class="btn" id="m-del" style="color:var(--fail)">删除站点</button>
+        <span style="flex:1"></span>
+        <button class="btn" id="m-cancel">取消</button>
+        <button class="btn primary" id="m-save">保存</button>
+      </div>
+      <div id="m-msg"></div>
+    </div>
+  </div>
+
+  <!-- 曲线 -->
+  <section id="s-chart" class="hidden">
+    <p id="chart-sub" style="color:var(--muted);font-size:12px"></p>
+    <canvas id="cv" width="1000" height="360"></canvas>
+  </section>
+
+  <!-- 配置 -->
+  <section id="s-cfg" class="hidden">
+    <div class="toolbar">
+      <button class="btn on" id="f-sites">sites.yaml</button>
+      <button class="btn" id="f-creds">creds.json</button>
+      <button class="btn primary" id="f-save">保存</button>
+      <span id="cfgpath" style="color:var(--muted);font-size:12px"></span>
+    </div>
+    <div id="cfghint" style="color:var(--muted);font-size:12px;margin-bottom:6px"></div>
+    <textarea class="cfg-area" id="f-text" spellcheck="false"></textarea>
+    <div id="msg"></div>
+  </section>
+</div>
+
+<script>
+const $ = s => document.querySelector(s);
+const token = (location.search.match(/token=([^&]+)/)||[])[1] || "";
+const H = {"Content-Type": "application/json"};
+if (token) H["X-Checkin-Token"] = token;
+const api = (p, opt) => fetch(p, opt).then(r => r.ok ? r.json() : r.json().then(j => Promise.reject(j.error||r.status)));
+
+// ---- tabs ----
+document.querySelectorAll(".tabs button").forEach(b => b.onclick = () => {
+  document.querySelectorAll(".tabs button").forEach(x => x.classList.remove("on"));
+  b.classList.add("on");
+  for (const t of ["run","chart","cfg"]) $("#s-"+t).classList.toggle("hidden", t !== b.dataset.t);
+  if (b.dataset.t === "chart") drawChart();
+  if (b.dataset.t === "cfg") loadFile(curFile);
+});
+
+// ---- status ----
+let STATUS = null;
+async function refresh() {
+  try {
+    STATUS = await api("/api/status");
+    $("#sub").textContent = STATUS.date + " · " + STATUS.sites.length + " 站";
+    $("#today-usd").textContent = "今日 ≈ $" + STATUS.today_usd.toFixed(2);
+    renderSites();
+  } catch (e) { $("#sub").textContent = "状态获取失败: " + e; }
+}
+function renderSites(pending) {
+  if (!STATUS.sites.length) {
+    $("#sites").innerHTML = '<div class="site" style="grid-column:1/-1;color:var(--muted)">' +
+      '还没有站点 — 点上方「＋ 添加网站」，或在「配置」页编辑 sites.yaml。</div>';
+    return;
+  }
+  $("#sites").innerHTML = STATUS.sites.map(s => {
+    let cls, txt;
+    if (pending && pending.has(s.name)) { cls = "p-run"; txt = "签到中"; }
+    else if (s.status === "ok")   { cls = "p-ok";   txt = "已签到 +$" + s.awarded_usd; }
+    else if (s.status === "done") { cls = "p-done"; txt = "今日已签"; }
+    else if (s.status === "fail") { cls = "p-fail"; txt = "失败"; }
+    else if (!s.cred)             { cls = "p-wait"; txt = "未配凭证"; }
+    else                          { cls = "p-wait"; txt = "未签"; }
+    return `<div class="site"><div class="nm">${s.name}</div>
+      <div class="url">${s.base_url}</div><span class="pill ${cls}">${txt}</span>
+      ${s.balance_usd ? `<div class="qt">$${s.balance_usd}</div>` : ""}
+      <div class="ops"><a onclick="openEdit('${encodeURIComponent(s.name)}')">编辑</a></div></div>`;
+  }).join("");
+}
+
+// ---- 添加/编辑站点弹窗 ----
+let editing = null;  // 原站名（null = 新增）
+function openModal() { $("#modal").classList.remove("hidden"); $("#m-msg").textContent = ""; }
+function closeModal() { $("#modal").classList.add("hidden"); editing = null; }
+function fillForm(s) {
+  $("#m-name").value = s.name; $("#m-url").value = s.base_url || "";
+  $("#m-user").value = s.username || ""; $("#m-pass").value = s.cred ? "***" : "";
+  $("#m-mode").value = s.mode || "oneapi"; $("#m-cred").value = s.credential || "";
+}
+window.openEdit = (enc) => {
+  const s = STATUS.sites.find(x => encodeURIComponent(x.name) === enc);
+  if (!s) return;
+  editing = s.name; $("#modal-title").textContent = "编辑网站";
+  $("#m-del").classList.remove("hidden");
+  fillForm(s); openModal();
+};
+$("#b-add").onclick = () => {
+  editing = null; $("#modal-title").textContent = "添加网站";
+  $("#m-del").classList.add("hidden");
+  fillForm({ name: "", base_url: "", username: "", cred: false, mode: "oneapi", credential: "" });
+  $("#m-pass").value = ""; openModal();
+};
+$("#m-cancel").onclick = closeModal;
+$("#modal").onclick = e => { if (e.target.id === "modal") closeModal(); };
+$("#m-detect").onclick = async () => {
+  const msg = $("#m-detect-msg"), stepsEl = $("#m-detect-steps");
+  msg.textContent = ""; stepsEl.textContent = "";
+  const base = $("#m-url").value.trim();
+  if (!base) { msg.textContent = "先填站点地址"; return; }
+  if ($("#m-pass").value === "***") { msg.textContent = "请先填入真实密码再检测"; return; }
+  $("#m-detect").disabled = true; msg.textContent = "探测中（用你填的账号实测，约 10~30 秒）…";
+  try {
+    const r = await api("/api/detect", {method: "POST", headers: H, body: JSON.stringify({
+      base_url: base, username: $("#m-user").value.trim(), password: $("#m-pass").value})});
+    $("#m-mode").value = r.mode;
+    msg.textContent = "检测结果：" + $("#m-mode").selectedOptions[0].text;
+    msg.className = "ok"; stepsEl.textContent = r.steps.join("\n");
+  } catch (e) { msg.textContent = "探测失败: " + e; }
+  $("#m-detect").disabled = false;
+};
+document.addEventListener("keydown", e => { if (e.key === "Escape" && !$("#modal").classList.contains("hidden")) closeModal(); });
+$("#m-showadv").onchange = e => $("#m-adv").classList.toggle("hidden", !e.target.checked);
+$("#m-del").onclick = async () => {
+  if (!editing || !confirm(`删除站点 ${editing}？（creds 里的账号一并删除）`)) return;
+  try {
+    await api("/api/site", {method: "POST", headers: H,
+      body: JSON.stringify({action: "delete", name: editing})});
+    closeModal(); await refresh();
+  } catch (e) { $("#m-msg").textContent = "删除失败: " + e; }
+};
+$("#m-save").onclick = async () => {
+  const m = $("#m-msg"); m.className = ""; m.textContent = "";
+  const body = {action: editing ? "update" : "add", name: $("#m-name").value.trim(),
+    base_url: $("#m-url").value.trim(), username: $("#m-user").value.trim(),
+    password: $("#m-pass").value, mode: $("#m-mode").value};
+  if ($("#m-showadv").checked && $("#m-cred").value.trim()) body.credential = $("#m-cred").value.trim();
+  if (!body.name) { m.textContent = "站点名称不能为空"; return; }
+  if (!body.base_url) { m.textContent = "站点地址不能为空"; return; }
+  if (editing) body.old_name = editing;
+  $("#m-save").disabled = true;
+  try {
+    await api("/api/site", {method: "POST", headers: H, body: JSON.stringify(body)});
+    m.className = "ok"; m.textContent = "✅ 已保存";
+    await refresh(); setTimeout(closeModal, 500);
+  } catch (e) { m.textContent = e; }
+  $("#m-save").disabled = false;
+};
+
+// ---- run + event polling ----
+let pending = null, sinceSeq = 0, lastTarget = "";
+async function start(mode) {
+  if (pending) return;
+  const targets = new Set(STATUS.sites.filter(
+    s => mode === "retry" ? s.status === "fail" : !["ok","done"].includes(s.status)).map(s => s.name));
+  if (!targets.size) { flash("没有符合条件的站"); return; }
+  pending = targets; sinceSeq = 0; lastTarget = mode;
+  $("#logbox").style.display = "block"; $("#logbox").textContent = "启动中…\n";
+  $("#b-full").disabled = $("#b-retry").disabled = true;
+  try {
+    const r = await api("/api/run", {method: "POST", headers: H,
+      body: JSON.stringify({mode: "today", notify: $("#notify").checked,
+                            only: mode === "retry" ? [...targets] : undefined})});
+    if (r.error) { flash(r.error); stopRun(); }
+  } catch (e) { flash("启动失败: " + e); stopRun(); }
+}
+function stopRun() { pending = null; $("#b-full").disabled = $("#b-retry").disabled = false; }
+function flash(t) { $("#runstate").textContent = t; setTimeout(() => { if (!pending) $("#runstate").textContent = ""; }, 6000); }
+async function poll() {
+  if (!pending) return;
+  try {
+    const ev = await api("/api/events?since=" + sinceSeq);
+    if (ev.events.length) {
+      sinceSeq = ev.seq;
+      const box = $("#logbox");
+      box.textContent += ev.events.map(e => e.log).join("");
+      box.scrollTop = box.scrollHeight;
+      ev.events.forEach(e => pending.delete(e.name));
+      renderSites(pending);
+      $("#runstate").textContent = "运行中… 剩 " + pending.size + " 站";
+    }
+    if (!ev.running && ev.summary && !pending.size) {
+      const s = ev.summary;
+      if (s.error) flash("异常: " + s.error);
+      else flash(`完成 ✅${s.tally[0]} ⏭️${s.tally[1]} ⚠️${s.tally[2]}`);
+      stopRun(); refresh();
+    }
+  } catch (e) { /* 服务瞬断下一轮再试 */ }
+}
+setInterval(poll, 1000);
+$("#b-full").onclick = () => start("today");
+$("#b-retry").onclick = () => start("retry");
+
+// ---- chart ----
+async function drawChart() {
+  const led = await api("/api/ledger");
+  const days = Object.keys(led).sort();
+  const rate = 500000;
+  const daily = days.map(d => Object.values(led[d])
+    .reduce((a, x) => a + (x.quota_awarded || 0), 0) / rate);
+  const cum = []; let acc = 0;
+  daily.forEach(v => { acc += v; cum.push(acc); });
+  const cv = $("#cv"), g = cv.getContext("2d");
+  g.clearRect(0, 0, cv.width, cv.height);
+  if (days.length < 2) { $("#chart-sub").textContent = "数据不足两天，先攒几天账本再看"; return; }
+  const W = cv.width, Hh = cv.height, L = 56, R = 56, T = 24, B = 40;
+  const maxD = Math.max(...daily) || 1, maxC = Math.max(...cum) || 1;
+  $("#chart-sub").textContent = `${days[0]} ~ ${days.at(-1)} · 日收益(柱) 与 累计$(曲线)，共 ${days.length} 天`;
+  const X = i => L + (W-L-R) * (days.length === 1 ? .5 : i/(days.length-1));
+  // 网格 + 左右轴
+  g.strokeStyle = "#262b36"; g.fillStyle = "#8b93a7"; g.font = "11px sans-serif";
+  for (let k = 0; k <= 4; k++) {
+    const y = T + (Hh-T-B) * k/4;
+    g.beginPath(); g.moveTo(L, y); g.lineTo(W-R, y); g.stroke();
+    g.textAlign = "right"; g.fillText((maxD*(1-k/4)).toFixed(1)+"$", L-6, y+4);
+    g.textAlign = "left";  g.fillText((maxC*(1-k/4)).toFixed(0)+"$", W-R+6, y+4);
+  }
+  const bw = Math.max(3, (W-L-R)/days.length*0.55);
+  g.fillStyle = "rgba(251,191,36,.75)";
+  days.forEach((d,i) => { const h = (Hh-T-B)*daily[i]/maxD;
+    g.fillRect(X(i)-bw/2, Hh-B-h, bw, h); });
+  g.strokeStyle = "#4ade80"; g.lineWidth = 2; g.beginPath();
+  cum.forEach((v,i) => { const y = T + (Hh-T-B)*(1-v/maxC); i ? g.lineTo(X(i),y) : g.moveTo(X(i),y); });
+  g.stroke();
+  g.fillStyle = "#8b93a7"; g.textAlign = "center"; g.font = "10px sans-serif";
+  const step = Math.ceil(days.length/8);
+  days.forEach((d,i) => { if (i % step === 0) g.fillText(d.slice(5), X(i), Hh-B+16); });
+}
+
+// ---- config ----
+let curFile = "sites";
+$("#f-sites").onclick = () => switchFile("sites");
+$("#f-creds").onclick = () => switchFile("creds");
+function switchFile(n) {
+  curFile = n;
+  $("#f-sites").classList.toggle("on", n==="sites");
+  $("#f-creds").classList.toggle("on", n==="creds");
+  loadFile(n);
+}
+async function loadFile(n) {
+  const f = await api("/api/file?name=" + n);
+  $("#f-text").value = f.text; $("#cfgpath").textContent = f.path + (f.exists ? "" : "（尚不存在）");
+  $("#cfghint").textContent = n === "creds" ? "提示：密码显示为 *** 表示保持不变；填新值才会覆盖。推荐写成 ${ENV_VAR} 占位。" : "";
+}
+$("#f-save").onclick = async () => {
+  const m = $("#msg"); m.className = ""; m.textContent = "保存中…";
+  try {
+    await api("/api/file", {method: "POST", headers: H,
+      body: JSON.stringify({name: curFile, text: $("#f-text").value})});
+    m.className = "ok"; m.textContent = "✅ 已保存（sites.yaml 改动即时生效）";
+    refresh();
+  } catch (e) { m.className = "err"; m.textContent = "❌ " + e; }
+};
+
+refresh();
+// 30s 兜底刷新（外部命令行跑完后面板也能跟上）
+setInterval(() => { if (!pending) refresh(); }, 30000);
+</script>
+</body>
+</html>

@@ -1,0 +1,56 @@
+name: Daily check-in
+
+on:
+  schedule:
+    # UTC 22:00 = 北京 06:00 全量；UTC 02:30 = 北京 10:30 增量补跑失败站
+    - cron: "0 22 * * *"
+    - cron: "30 2 * * *"
+  workflow_dispatch:
+    inputs:
+      only:
+        description: "只跑名字含关键字的站（逗号分隔，留空=全部）"
+        required: false
+        default: ""
+
+jobs:
+  checkin:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install deps
+        run: pip install requests
+
+      - name: Prepare config
+        run: |
+          mkdir -p run
+          # 推荐在 fork 的仓库根放 sites.yaml / creds.json（已被 .gitignore 挡住，
+          # 需自行用 secrets 或私有仓管理）；没有则回退到模板（0 站，正常退出）
+          [ -f sites.yaml ] && cp sites.yaml run/sites.yaml || cp sites.example.yaml run/sites.yaml
+          [ -f creds.json ] && cp creds.json run/creds.json || cp creds.example.json run/creds.json
+
+      - name: Run
+        env:
+          CHECKIN_SITES: run/sites.yaml
+          CHECKIN_CREDS: run/creds.json
+          CHECKIN_STATE: run/state.json
+          CHECKIN_LEDGER: run/ledger.json
+          TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
+          TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
+        run: |
+          ONLY="${{ github.event.inputs.only }}"
+          ARGS="--today --notify"
+          [ -n "$ONLY" ] && ARGS="$ARGS --only $ONLY"
+          python checkin.py $ARGS
+
+      - name: Save ledger (optional artifact)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: checkin-run
+          path: run/*.json
+          retention-days: 90
