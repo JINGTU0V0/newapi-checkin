@@ -202,6 +202,32 @@ def builtin_template_text() -> str:
     return ""
 
 
+# 可选：站点清单「主数据」JSON（博客/其他系统的站表），条目带 checkin:{...} 才纳入签到。
+# env CHECKIN_MASTER_JSON 指向文件即启用（默认关，不影响普通用户）；与 sites.yaml 重名站去重。
+def _load_master_sites(existing: list) -> list:
+    path = os.environ.get("CHECKIN_MASTER_JSON", "")
+    if not path:
+        return []
+    try:
+        data = json.loads(Path(path).read_text(encoding="utf-8"))
+    except Exception as e:
+        print(f"⚠️ 主数据 {path} 读取失败: {e}")
+        return []
+    have = {(s.get("name") or "").lower() for s in existing}
+    sites = []
+    for entry in data if isinstance(data, list) else []:
+        cfg = entry.get("checkin") if isinstance(entry, dict) else None
+        if isinstance(cfg, dict) and cfg.get("base_url"):
+            site = dict(cfg)
+            name = site.get("name") or (entry.get("name") if isinstance(entry, dict) else "") or ""
+            site["name"] = name
+            if name.lower() in have:  # sites.yaml 手写条目优先，主数据只做增量
+                continue
+            have.add(name.lower())
+            sites.append(site)
+    return sites
+
+
 def load_config() -> dict:
     cfg = {}
     if SITES_FILE.exists():
@@ -220,6 +246,7 @@ def load_config() -> dict:
     cfg.setdefault("settings", {})
     if not isinstance(cfg.get("sites"), list):  # 空 'sites:' 段解析成 None，归一化成 []
         cfg["sites"] = []
+    cfg["sites"] = cfg["sites"] + _load_master_sites(cfg["sites"])
     return cfg
 
 
