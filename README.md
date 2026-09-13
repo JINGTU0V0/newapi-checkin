@@ -19,7 +19,7 @@
   | `proof` | Altcha 式 PoW 验证，解出一次性 proof |
   | `ocr` | 图形验证码，ddddocr 识别重试（需 `pip install ddddocr pillow`） |
   | `mode: routerteam` | JWT 鉴权站（签到 + 每日抽奖报名） |
-  | `session_cookie` / `access_token` | 直连凭证：跳过登录接口，绕开 Cloudflare Turnstile 等人机验证（见下文） |
+  | `session_cookie` / `access_token` | 直连凭证：跳过登录接口，绕开 Cloudflare Turnstile / OAuth 等无法纯 HTTP 登录的站（见下文） |
   面板添加站点时点「🔍 自动检测模式」，用你的凭据实测自动选出正确模式并展示判定依据。
 - ✅ Telegram 通知：失败当天每站只报一次；当天全部完成后推日报（各站奖励 + 合计美元）
 - ✅ `.checkin_ledger.json` 按日记账奖励额度与余额，自动保留 90 天
@@ -105,15 +105,18 @@ exe 内置配置模板（settings/注释齐全，站点列表为空）：本地�
 `CHECKIN_SITES` / `CHECKIN_CREDS` / `CHECKIN_STATE` / `CHECKIN_LEDGER` 环境变量
 可覆盖四个文件路径（默认在脚本同目录）。Docker 镜像内状态默认写进 `/app/data` 卷。
 
-## 挂了 Cloudflare Turnstile 的站
+## 挂了人机验证 / 无法纯 HTTP 登录的站（Turnstile、OAuth）
 
-不少新站把 Turnstile 人机验证挂在**登录接口**上（签到接口本身通常不挂），账密自动化会被
-`请完成人机验证` 拒掉。Turnstile token 必须由真实浏览器执行 JS 生成，纯 HTTP 无法伪造——
-但**不需要**伪造：验证只在登录时做一次，把登录产物（凭证）复用即可完全绕开。
+不少新站要么把 Cloudflare Turnstile 挂在**登录接口**上，要么干脆只开 **OAuth 登录**
+（linux.do / GitHub / Google），账密自动化都走不通。Turnstile token 必须由真实浏览器生成、
+OAuth 授权码要在第三站点一次「授权」，纯 HTTP 都无法伪造——但**都不需要**伪造：
+
+**登录（或授权）只需要做一次**，把登录产物（凭证）复用即可完全绕开。OAuth 站授权完成
+后给的 session/令牌，和账密登录给的是同一种东西，照旧复用。
 
 **做法（一次手动，长期自动）**：
 
-1. 在浏览器正常登录该站一次
+1. 在浏览器正常登录（或走一次 OAuth 授权）该站
 2. 提取凭证，二选一（**推荐 access_token**，不会过期）：
    - **Access Token**：站点「个人设置 → 系统访问令牌」生成（`sk-` 开头）
    - **Session Cookie**：F12 → Network → 任意 API 请求 → Request Headers → `Cookie:` 里
@@ -127,8 +130,14 @@ credentials:
 ```
 
 之后签到完全跳过 `/api/user/login`，用凭证直连 `/api/user/self` 验证 + 签到，不再触发
-Turnstile。直连模式下**不会调登出接口**（防止把复用的 cookie 作废）。session cookie 过期后
-（一般几天到几周，access_token 无此问题）重新提取一次即可。
+Turnstile / OAuth。直连模式下**不会调登出接口**（防止把复用的 cookie 作废）。session cookie
+过期后（一般几天到几周，access_token 无此问题）重新提取一次即可。
+
+> **Access Token 兼容性**：只有 New API 新版的「系统访问令牌」才带用户鉴权、能过
+> `/api/user/self`。老 one-api / 部分 fork 里那个 `sk-` 只是模型调用 key（消耗额度的），
+> 登录鉴权中间件不认它——那种站请改用 session cookie。拿不准就先验证一下：请求
+> `https://站点/api/user/self`，Header 带 `Authorization: Bearer sk-xxx`，返回
+> `success:true` 且有 `id` 才算有效；工具内置的直连校验也会在签到时报「直连凭证无效」。
 
 同款思路参考了 Jasonliu-0/Newapi-checkin 等同类项目。付费打码平台（2captcha/CapSolver）
 也可解 Turnstile token，但签到场景用凭证复用零成本、更稳。
