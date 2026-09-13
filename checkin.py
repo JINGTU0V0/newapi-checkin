@@ -387,6 +387,42 @@ def logout(session: requests.Session, base_url: str) -> None:
         pass
 
 
+def _direct_auth(session: requests.Session, site: dict, verify_ssl=True):
+    """用 session cookie / access token 直连，完全跳过登录接口。
+    Turnstile/CF 验证只挂在登录上，复用已登录凭证即可绕过。
+    成功 -> (uid, None)；凭证无效/异常 -> (None, 原因)；未配置 -> None。"""
+    cookie = site.get("session_cookie") or ""
+    token = site.get("access_token") or ""
+    if not cookie and not token:
+        return None
+    base = site["base_url"]
+    if token:
+        session.headers["Authorization"] = f"Bearer {token}"  # 挂 session 上，后续请求都带
+    if cookie:  # 每站独立 session，不设 domain；兼容两种 cookie 命名
+        session.cookies.set("session", cookie)
+        session.cookies.set("new-api-session", cookie)
+    try:
+        r = session.get(f"{base}/api/user/self", timeout=15, verify=verify_ssl)
+        d = r.json()
+    except Exception as e:
+        if not verify_ssl or "SSL" not in type(e).__name__:
+            return None, f"直连校验异常 {type(e).__name__}: {e}"
+        return _direct_auth(session, site, verify_ssl=False)
+    data = d.get("data") if isinstance(d, dict) else None
+    if isinstance(d, dict) and d.get("success") and isinstance(data, dict) and data.get("id"):
+        return str(data["id"]), None
+    return None, f"直连凭证无效: {str(d.get('message', d))[:80] if isinstance(d, dict) else str(d)[:80]}"
+
+
+def _apply_auth(session, site, auth_info, headers) -> dict:
+    """按登录返回类型挂好鉴权（数字 uid -> New-Api-User 头；否则 Bearer）。"""
+    if auth_info and str(auth_info).isdigit():
+        headers["New-Api-User"] = str(auth_info)
+    else:
+        session.headers["Authorization"] = f"Bearer {auth_info}"
+    return headers
+
+
 def login(session: requests.Session, site: dict, verify_ssl=True):
     try:
         session.post(f"{site['base_url']}/api/user/auth/logout", timeout=5)
@@ -514,39 +550,53 @@ def checkin(session, site, auth_info, headers) -> dict:
                         params=params, timeout=15).json()
 
 
-def detect_mode(base_url: str, username: str, password: str) -> tuple[str, list]:
+def detect_mode(base_url: str, username: str, password: str,
+                session_cookie: str = "", access_token: str = "") -> tuple[str, list]:
     """凭据实测探测站点签到类型，返回 (mode, 依据步骤)。
-    探测顺序：New/One API 账密登录 -> 直接 POST 签到（成功即 oneapi；失败按报错
-    关键词映射 claim/sign/proof/ocr）-> RouterTeam JWT 登录。全程幂等：若 POST
-    顺手把今日签到完成了，也如实返回 oneapi。"""
+    探测顺序：直连凭证（cookie/token，跳过登录）-> New/One API 账密登录 -> 直接 POST
+    签到（成功即 oneapi；失败按报错关键词映射 claim/sign/proof/ocr）-> RouterTeam JWT
+    登录。全程幂等：若 POST 顺手把今日签到完成了，也如实返回 oneapi。"""
     steps = []
     site = {"name": "?", "base_url": base_url.rstrip("/"), "username": username,
-            "password": password}
+            "password": password, "session_cookie": session_cookie,
+            "access_token": access_token}
     s = new_session()
-    try:
-        ok, auth = login_with_ssl_fallback(s, site)
-    except Exception as e:
-        ok, auth = False, f"连接失败 {type(e).__name__}"
+    auth = None
+    direct = _direct_auth(s, site)
+    logged_in = False  # 只有真走过 /api/user/login 才允许 logout（直连凭证登出会作废 cookie）
+    if direct is not None:
+        ad, err = direct
+        if ad is None:
+            steps.append(f"· 直连凭证校验失败: {str(err)[:80]}")
+        else:
+            auth = ad
+            steps.append("✔ session_cookie / access_token 直连有效（跳过登录，不受 Turnstile 影响）")
+    ok = auth is not None
+    if not ok:
+        try:
+            ok, auth = login_with_ssl_fallback(s, site)
+            logged_in = ok
+        except Exception as e:
+            ok, auth = False, f"连接失败 {type(e).__name__}"
     if ok:
         headers = {}
-        if str(auth).isdigit():
-            headers["New-Api-User"] = str(auth)
-        else:
-            s.headers["Authorization"] = f"Bearer {auth}"
-        steps.append("✔ /api/user/login 账密登录成功（New/One API 系）")
+        _apply_auth(s, site, auth, headers)
+        steps.append("✔ /api/user/login 账密登录成功（New/One API 系）" if logged_in
+                     else "✔ 用直连凭证继续探测签到接口")
+        quit = lambda: logout(s, site["base_url"]) if logged_in else None
         msg = ""
         try:
             d = s.post(f"{site['base_url']}/api/user/checkin", headers=headers,
                        timeout=15).json()
             if isinstance(d, dict) and d.get("success"):
                 steps.append("✔ POST /api/user/checkin 直接成功 → 标准签到")
-                logout(s, site["base_url"])
+                quit()
                 return "oneapi", steps
             msg = str(d.get("message", "")) if isinstance(d, dict) else str(d)
             steps.append(f"· POST 签到未直接通过: {msg[:80]}")
             if "已" in msg or "already" in msg.lower():  # 今日已签：接口本身是标准式
                 steps.append("✔ 提示今日已签到 → 标准签到（oneapi）")
-                logout(s, site["base_url"])
+                quit()
                 return "oneapi", steps
         except Exception as e:
             steps.append(f"· POST 签到异常: {type(e).__name__}")
@@ -576,9 +626,14 @@ def detect_mode(base_url: str, username: str, password: str) -> tuple[str, list]
             except Exception:
                 steps.append("· 无法确定，按标准签到处理（可手动改模式）")
                 mode = "oneapi"
-        logout(s, site["base_url"])
+        quit()
         return mode, steps
     steps.append(f"· New/One API 登录失败: {str(auth)[:80]}")
+    if any(k in str(auth) for k in ("人机验证", "Turnstile", "turnstile", "captcha")) \
+            or "verify" in str(auth).lower():
+        steps.append("💡 该站登录挂了人机验证（Turnstile 等）：账密探测走不通。"
+                     "在浏览器登录一次，把 session cookie 或系统访问令牌填入下方"
+                     "「直连凭证」再检测/签到（见 README）。")
     # RouterTeam 式 JWT 站
     try:
         r = s.post(f"{site['base_url']}/api/auth/login",
@@ -673,20 +728,33 @@ def handle_routerteam(site: dict, award: dict) -> str:
 
 def handle_http(site: dict, award: dict) -> str:
     session = new_session()
-    try:
-        ok, auth_info = login_with_ssl_fallback(session, site)
-    except Exception as e:
-        print(f"  ❌ 连接失败: {type(e).__name__}: {e}")
-        return "fail"
-    if not ok:
-        print(f"  登录失败: {auth_info}")
-        return "fail"
-    print("  登录成功，正在签到...")
     headers = {}
-    if auth_info and auth_info.isdigit():
-        headers["New-Api-User"] = auth_info
+    keep_session = False
+    direct = _direct_auth(session, site)
+    if direct is not None:  # 配了 cookie/token：跳过登录（绕开 Turnstile）
+        auth_info, err = direct
+        if auth_info is None:
+            print(f"  ❌ {err}（cookie/token 可能过期；改回账密或重新提取）")
+            return "fail"
+        _apply_auth(session, site, auth_info, headers)
+        print(f"  🔑 直连凭证有效（用户 {auth_info}），跳过登录")
+        keep_session = True  # 复用会话，不能登出（会把 cookie 作废）
     else:
-        session.headers["Authorization"] = f"Bearer {auth_info}"
+        try:
+            ok, auth_info = login_with_ssl_fallback(session, site)
+        except Exception as e:
+            print(f"  ❌ 连接失败: {type(e).__name__}: {e}")
+            return "fail"
+        if not ok:
+            msg = str(auth_info)
+            print(f"  登录失败: {msg}")
+            if any(k in msg for k in ("人机验证", "Turnstile", "turnstile", "captcha", "验证失败")) \
+                    or "verify" in msg.lower():
+                print("  💡 该站登录挂了人机验证：在浏览器登录一次，把 session cookie 或"
+                      " 系统访问令牌填进配置 session_cookie / access_token 即可绕开（见 README）")
+            return "fail"
+        print("  登录成功，正在签到...")
+        _apply_auth(session, site, auth_info, headers)
     status = None
     try:
         if not site.get("claim") and not site.get("ocr"):
@@ -697,7 +765,8 @@ def handle_http(site: dict, award: dict) -> str:
         print(f"  ❌ 签到请求失败: {type(e).__name__}: {e}")
         status = "fail"
     finally:
-        logout(session, site["base_url"])
+        if not keep_session:
+            logout(session, site["base_url"])
     return status or "fail"
 
 
@@ -931,7 +1000,7 @@ def run() -> None:
             print("  （还没有站点：用 Web 面板「＋ 添加网站」，或编辑 sites.yaml）")
         for s in sites:
             pw = s.get("password") or ""
-            flag = "✓" if pw and pw != "***" and not re.fullmatch(r"\$\{\w+\}", pw) else "✗无凭证"
+            flag = "✓" if _has_login_cred(s) else "✗无凭证"
             print(f"  [{flag}] {s['name']:<14} {s.get('base_url','')}  mode={s.get('mode','oneapi')}")
         return
 
@@ -947,12 +1016,19 @@ def run() -> None:
     run_batch(targets, cfg, state, marks, args.notify, args.jobs)
 
 
+def _has_login_cred(s: dict) -> bool:
+    """有账密（真实密码/已展开 ENV）或有直连凭证（cookie/token）任一即可跑。"""
+    if s.get("session_cookie") or s.get("access_token"):
+        return True
+    pw = s.get("password") or ""
+    return bool(pw) and pw != "***" and not re.fullmatch(r"\$\{\w+\}", pw)
+
+
 def pick_targets(sites: list, state: dict, keys: list) -> list:
     """过滤出本轮要跑的站：有凭证、匹配 --only 关键字、今日未完成。"""
     targets = []
     for s in sites:
-        pw = s.get("password") or ""
-        if not pw or pw == "***" or re.fullmatch(r"\$\{\w+\}", pw):
+        if not _has_login_cred(s):
             continue
         if keys and not any(k in s["name"].lower() for k in keys):
             continue

@@ -106,8 +106,21 @@ a { color: var(--run); }
       <div class="mh" id="modal-title">添加网站</div>
       <label>站点名称<input id="m-name" placeholder="如 MyAPI"></label>
       <label>站点地址<input id="m-url" placeholder="https://api.example.com"></label>
-      <label>用户名 / 邮箱<input id="m-user" placeholder="登录用的用户名或邮箱"></label>
-      <label>密码<input id="m-pass" type="password" placeholder="明文或 ${ENV_VAR} 占位；编辑时留 *** 表示不修改"></label>
+      <label>登录方式
+        <select id="m-authtype">
+          <option value="pw">用户名 + 密码</option>
+          <option value="direct">直连凭证（cookie / access token，跳过登录）</option>
+        </select>
+      </label>
+      <div id="m-pw-box">
+        <label>用户名 / 邮箱<input id="m-user" placeholder="登录用的用户名或邮箱"></label>
+        <label>密码<input id="m-pass" type="password" placeholder="明文或 ${ENV_VAR} 占位；编辑时留 *** 表示不修改"></label>
+      </div>
+      <div id="m-direct-box" class="hidden">
+        <label>Session Cookie<input id="m-cookie" type="password" placeholder="浏览器登录后 F12→Network→任意请求→Cookie: session=*** session 的值；编辑时留 *** 表示不修改"></label>
+        <label>Access Token（系统访问令牌）<input id="m-token" type="password" placeholder="站点「个人设置→系统访问令牌」生成，以 sk- 开头；永不过期，优先推荐；编辑时留 *** 表示不修改"></label>
+        <div style="font-size:11px;color:var(--muted);margin:-4px 0 8px">适用：站点登录挂了 Cloudflare Turnstile 等人机验证、账密自动化过不去时。在浏览器登录一次后提取凭证贴进来，之后签到不再走登录接口。</div>
+      </div>
       <label>签到模式
         <select id="m-mode">
           <option value="oneapi">标准 New/One API（账密登录+签到）</option>
@@ -207,8 +220,16 @@ function closeModal() { $("#modal").classList.add("hidden"); editing = null; }
 function fillForm(s) {
   $("#m-name").value = s.name; $("#m-url").value = s.base_url || "";
   $("#m-user").value = s.username || ""; $("#m-pass").value = s.cred ? "***" : "";
+  $("#m-cookie").value = s.direct ? "***" : ""; $("#m-token").value = s.direct ? "***" : "";
+  $("#m-authtype").value = s.direct ? "direct" : "pw"; syncAuthType();
   $("#m-mode").value = s.mode || "oneapi"; $("#m-cred").value = s.credential || "";
 }
+function syncAuthType() {
+  const d = $("#m-authtype").value === "direct";
+  $("#m-pw-box").classList.toggle("hidden", d);
+  $("#m-direct-box").classList.toggle("hidden", !d);
+}
+$("#m-authtype").onchange = syncAuthType;
 window.openEdit = (enc) => {
   const s = STATUS.sites.find(x => encodeURIComponent(x.name) === enc);
   if (!s) return;
@@ -219,8 +240,8 @@ window.openEdit = (enc) => {
 $("#b-add").onclick = () => {
   editing = null; $("#modal-title").textContent = "添加网站";
   $("#m-del").classList.add("hidden");
-  fillForm({ name: "", base_url: "", username: "", cred: false, mode: "oneapi", credential: "" });
-  $("#m-pass").value = ""; openModal();
+  fillForm({ name: "", base_url: "", username: "", cred: false, direct: false, mode: "oneapi", credential: "" });
+  $("#m-pass").value = ""; $("#m-cookie").value = ""; $("#m-token").value = ""; openModal();
 };
 $("#m-cancel").onclick = closeModal;
 $("#modal").onclick = e => { if (e.target.id === "modal") closeModal(); };
@@ -229,11 +250,17 @@ $("#m-detect").onclick = async () => {
   msg.textContent = ""; stepsEl.textContent = "";
   const base = $("#m-url").value.trim();
   if (!base) { msg.textContent = "先填站点地址"; return; }
-  if ($("#m-pass").value === "***") { msg.textContent = "请先填入真实密码再检测"; return; }
-  $("#m-detect").disabled = true; msg.textContent = "探测中（用你填的账号实测，约 10~30 秒）…";
+  const direct = $("#m-authtype").value === "direct";
+  const cookie = $("#m-cookie").value, token = $("#m-token").value;
+  if (direct && cookie === "***" && token === "***") {
+    msg.textContent = "请先填入真实的 cookie / token 再检测"; return; }
+  if (!direct && $("#m-pass").value === "***") {
+    msg.textContent = "请先填入真实密码再检测"; return; }
+  $("#m-detect").disabled = true; msg.textContent = "探测中（用你填的凭证实测，约 10~30 秒）…";
   try {
     const r = await api("/api/detect", {method: "POST", headers: H, body: JSON.stringify({
-      base_url: base, username: $("#m-user").value.trim(), password: $("#m-pass").value})});
+      base_url: base, username: $("#m-user").value.trim(), password: $("#m-pass").value,
+      session_cookie: cookie === "***" ? "" : cookie, access_token: token === "***" ? "" : token})});
     $("#m-mode").value = r.mode;
     msg.textContent = "检测结果：" + $("#m-mode").selectedOptions[0].text;
     msg.className = "ok"; stepsEl.textContent = r.steps.join("\n");
@@ -255,9 +282,16 @@ $("#m-save").onclick = async () => {
   const body = {action: editing ? "update" : "add", name: $("#m-name").value.trim(),
     base_url: $("#m-url").value.trim(), username: $("#m-user").value.trim(),
     password: $("#m-pass").value, mode: $("#m-mode").value};
+  if ($("#m-authtype").value === "direct") {
+    body.session_cookie = $("#m-cookie").value; body.access_token = $("#m-token").value;
+  }
   if ($("#m-showadv").checked && $("#m-cred").value.trim()) body.credential = $("#m-cred").value.trim();
   if (!body.name) { m.textContent = "站点名称不能为空"; return; }
   if (!body.base_url) { m.textContent = "站点地址不能为空"; return; }
+  if ($("#m-authtype").value === "direct" &&
+      (!body.session_cookie || body.session_cookie === "***") &&
+      (!body.access_token || body.access_token === "***") && !editing) {
+    m.textContent = "直连凭证需至少填 Session Cookie 或 Access Token"; return; }
   if (editing) body.old_name = editing;
   $("#m-save").disabled = true;
   try {

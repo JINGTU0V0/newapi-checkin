@@ -166,6 +166,10 @@ def _creds_mutate(action: str, payload: dict) -> None:
         pw = payload.get("password") or ""
         if pw and pw != "***":
             entry["password"] = pw
+        for k in ("session_cookie", "access_token"):  # 直连凭证（绕 Turnstile 登录）
+            v = payload.get(k) or ""
+            if v and v != "***":
+                entry[k] = v.strip()
         entry.setdefault("username", "")
         entry.setdefault("password", "")
     checkin._save_json(checkin.CREDS_FILE, cre)
@@ -194,21 +198,24 @@ def _is_loopback(host: str) -> bool:
 
 def _has_cred(s) -> bool:
     import re as _re
+    if s.get("session_cookie") or s.get("access_token"):
+        return True
     pw = s.get("password") or ""
     return bool(pw) and pw != "***" and not _re.fullmatch(r"\$\{\w+\}", pw)
 
 
 def _mask_creds(text: str) -> str:
-    """GET creds 时把明文密码换成 ***；${ENV} 占位不是秘密，原样保留。"""
+    """GET creds 时把明文秘密换成 ***；${ENV} 占位不是秘密，原样保留。"""
     try:
         obj = json.loads(text)
     except Exception:
         return text
+    secrets = ("password", "session_cookie", "access_token")
 
     def walk(o):
         if isinstance(o, dict):
             for k, v in o.items():
-                if k == "password" and isinstance(v, str) and v and not v.startswith("${"):
+                if k in secrets and isinstance(v, str) and v and not v.startswith("${"):
                     o[k] = "***"
                 else:
                     walk(v)
@@ -229,7 +236,8 @@ def _unmask_creds(new_text: str, old_text: str) -> str:
     def restore(n, o):
         if isinstance(n, dict) and isinstance(o, dict):
             for k, v in n.items():
-                if k == "password" and v == "***" and isinstance(o.get(k), str):
+                if k in ("password", "session_cookie", "access_token") and v == "***" \
+                        and isinstance(o.get(k), str):
                     n[k] = o[k]
                 else:
                     restore(v, o.get(k))
@@ -257,6 +265,7 @@ def _status_payload() -> dict:
             "username": s.get("username", ""),
             "credential": s.get("credential", ""),
             "cred": _has_cred(s),
+            "direct": bool(s.get("session_cookie") or s.get("access_token")),
             "status": state.get(s["name"], ""),
             "awarded_usd": round((day.get("quota_awarded") or 0) / rate, 4),
             "balance_usd": round((day.get("balance_quota") or 0) / rate, 2),
@@ -385,8 +394,10 @@ class Handler(BaseHTTPRequestHandler):
             base = (body.get("base_url") or "").strip().rstrip("/")
             if not base.startswith(("http://", "https://")):
                 return self._send(400, {"error": "请先填写合法的站点地址（http/https）"})
-            mode, steps = checkin.detect_mode(base, body.get("username") or "",
-                                              body.get("password") or "")
+            mode, steps = checkin.detect_mode(
+                base, body.get("username") or "", body.get("password") or "",
+                session_cookie=body.get("session_cookie") or "",
+                access_token=body.get("access_token") or "")
             return self._send(200, {"mode": mode, "steps": steps})
         if u.path == "/api/site":
             action = body.get("action", "add")

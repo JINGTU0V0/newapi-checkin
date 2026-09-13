@@ -30,6 +30,9 @@ defaults:
 #   proof      签到需先解 Altcha PoW 换一次性 proof
 #   ocr        签到带图形验证码，需 pip install ddddocr pillow
 #   checkin_code  固定签到码（写在 creds.json 里更好）
+#   session_cookie / access_token  写在 creds.json：直连凭证跳过登录，
+#     专治挂了 Cloudflare Turnstile 人机验证的站（浏览器登录一次拿凭证，
+#     access_token 在站点「个人设置→系统访问令牌」生成，永不过期，推荐）
 #   enabled    false 可临时停用
 # ------------------------------------------------------------
 sites:
